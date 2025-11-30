@@ -324,38 +324,19 @@ def create_markdown_output(fics, filename="filtered_fics.md"):
     print(f"Markdown file created: {filename}")
     print(f"{'='*80}\n")
 
-def llm_compare_pair(fic1, fic2, ai, search_param, comparison_cache):
+def llm_compare_pair(fic1, fic2, ai, search_param):
     """
     Compare two fics using LLM and return True if fic1 is better than fic2.
-    Uses caching to avoid redundant comparisons.
     
     Args:
         fic1: First fic dictionary
         fic2: Second fic dictionary
         ai: OllamaAI instance
         search_param: User's search criteria
-        comparison_cache: Dictionary to cache comparison results
     
     Returns:
         True if fic1 is better, False if fic2 is better
     """
-    # Track total attempts
-    if hasattr(comparison_cache, '_total_attempts'):
-        comparison_cache._total_attempts += 1
-    
-    # Create cache key using URLs (order-independent) to handle duplicate titles
-    cache_key = tuple(sorted([fic1.get('url', fic1['title']), fic2.get('url', fic2['title'])]))  
-    
-    # Check cache first
-    if cache_key in comparison_cache:
-        result = comparison_cache[cache_key]
-        # Track cache hit (increment counter if it exists)
-        if hasattr(comparison_cache, '_hits'):
-            comparison_cache._hits += 1
-        print(f"{'  ' * 8}💾 Cache hit! Skipping LLM call.")
-        # Return True if fic1 was the winner in cached result
-        return result == fic1.get('url', fic1['title'])
-    
     # Format fic summaries
     fic1_tags = ', '.join(fic1.get('freeform_tags', [])) or 'None'
     fic2_tags = ', '.join(fic2.get('freeform_tags', [])) or 'None'
@@ -363,29 +344,23 @@ def llm_compare_pair(fic1, fic2, ai, search_param, comparison_cache):
     fic2_summary = f"Title: {fic2['title']}\nSummary: {fic2['summary']}\nTags: {fic2_tags}\nWord Count: {fic2['word_count']}\nKudos: {fic2['kudos']}"
     
     # Ask LLM to compare
-    prompt = f"Compare these two fics based on the user's preferences: {search_param}\n\nFic 1:\n{fic1_summary}\n\nFic 2:\n{fic2_summary}\n\nWhich fic better matches the search criteria? Respond with ONLY '<Fic 1>' or '<Fic 2>'."
+    prompt = f"Compare these two fics based on the user's preferences: {search_param}\n\nFic 1:\n{fic1_summary}\n\nFic 2:\n{fic2_summary}"
     response = ai.send_message(prompt)
     
     # Parse response - check for exact format markers first, then fallback to case-insensitive
     response_lower = response.lower()
     if "<fic 1>" in response_lower or ("fic 1" in response_lower and "fic 2" not in response_lower):
-        winner = fic1.get('url', fic1['title'])
         result = True
     elif "<fic 2>" in response_lower or ("fic 2" in response_lower and "fic 1" not in response_lower):
-        winner = fic2.get('url', fic2['title'])
         result = False
     else:
         # Unclear response - use random selection as fallback
         result = random.choice([True, False])
-        winner = fic1.get('url', fic1['title']) if result else fic2.get('url', fic2['title'])
         print(f"  ⚠ Unclear LLM response: '{response[:50]}...'. Randomly selected: '{fic1['title'] if result else fic2['title']}'")
-    
-    # Cache the result
-    comparison_cache[cache_key] = winner
     
     return result
 
-def merge_sorted_lists(left, right, ai, search_param, comparison_cache, depth):
+def merge_sorted_lists(left, right, ai, search_param, depth):
     """
     Merge two sorted lists of fics by comparing items at the boundaries.
     
@@ -394,7 +369,6 @@ def merge_sorted_lists(left, right, ai, search_param, comparison_cache, depth):
         right: Sorted list of fics (best to worst)
         ai: OllamaAI instance
         search_param: User's search criteria
-        comparison_cache: Dictionary to cache comparison results
         depth: Current recursion depth for logging
     
     Returns:
@@ -408,7 +382,7 @@ def merge_sorted_lists(left, right, ai, search_param, comparison_cache, depth):
     
     while i < len(left) and j < len(right):
         # Compare front items from each list
-        if llm_compare_pair(left[i], right[j], ai, search_param, comparison_cache):
+        if llm_compare_pair(left[i], right[j], ai, search_param):
             result.append(left[i])
             i += 1
         else:
@@ -424,7 +398,7 @@ def merge_sorted_lists(left, right, ai, search_param, comparison_cache, depth):
     
     return result
 
-def merge_sort_fics(fics, ai, search_param, comparison_cache, depth=0):
+def merge_sort_fics(fics, ai, search_param, depth=0):
     """
     Recursively sort fics using merge sort with LLM comparisons.
     
@@ -432,7 +406,6 @@ def merge_sort_fics(fics, ai, search_param, comparison_cache, depth=0):
         fics: List of fic dictionaries to sort
         ai: OllamaAI instance
         search_param: User's search criteria
-        comparison_cache: Dictionary to cache comparison results
         depth: Current recursion depth for logging
     
     Returns:
@@ -445,7 +418,7 @@ def merge_sort_fics(fics, ai, search_param, comparison_cache, depth=0):
     # Base case: 2 items - direct comparison
     if len(fics) == 2:
         print(f"{'  ' * depth}Comparing: '{fics[0]['title']}' vs '{fics[1]['title']}'")
-        if llm_compare_pair(fics[0], fics[1], ai, search_param, comparison_cache):
+        if llm_compare_pair(fics[0], fics[1], ai, search_param):
             return [fics[0], fics[1]]
         else:
             return [fics[1], fics[0]]
@@ -454,10 +427,10 @@ def merge_sort_fics(fics, ai, search_param, comparison_cache, depth=0):
     mid = len(fics) // 2
     print(f"{'  ' * depth}Dividing {len(fics)} fics into {mid} and {len(fics) - mid}...")
     
-    left_sorted = merge_sort_fics(fics[:mid], ai, search_param, comparison_cache, depth + 1)
-    right_sorted = merge_sort_fics(fics[mid:], ai, search_param, comparison_cache, depth + 1)
+    left_sorted = merge_sort_fics(fics[:mid], ai, search_param, depth + 1)
+    right_sorted = merge_sort_fics(fics[mid:], ai, search_param, depth + 1)
     
-    return merge_sorted_lists(left_sorted, right_sorted, ai, search_param, comparison_cache, depth)
+    return merge_sorted_lists(left_sorted, right_sorted, ai, search_param, depth)
 
 def LLM_tournament_style_ranking(fics, search_param):
     """
@@ -486,17 +459,12 @@ def LLM_tournament_style_ranking(fics, search_param):
     
     ai = OllamaAI("goekdenizguelmez/JOSIEFIED-Qwen3:4b", 3, max_history_pairs=0)
     
-    # Create cache with hit tracking
-    comparison_cache = {}
-    comparison_cache._hits = 0  # Track cache hits
-    comparison_cache._total_attempts = 0  # Track total comparison attempts
-    
     import math
     
     print(f"\n{'='*80}")
     print(f"Starting Tournament-Style Ranking (Merge Sort Algorithm)")
     print(f"Total fics: {len(fics)}")
-    # More accurate formula: N*log2(N) is average, worst case can be up to N*log2(N) + N
+    # Merge sort uses between (N/2)*log2(N) and N*log2(N) comparisons
     if len(fics) > 1:
         expected_min = int(len(fics) * math.log2(len(fics)) * 0.5)
         expected_max = int(len(fics) * math.log2(len(fics)))
@@ -505,7 +473,7 @@ def LLM_tournament_style_ranking(fics, search_param):
     
     try:
         # Perform merge sort
-        sorted_fics = merge_sort_fics(fics, ai, search_param, comparison_cache, depth=0)
+        sorted_fics = merge_sort_fics(fics, ai, search_param, depth=0)
         
         # Assign tournament ranks (1 = best)
         for rank, fic in enumerate(sorted_fics, 1):
@@ -513,16 +481,6 @@ def LLM_tournament_style_ranking(fics, search_param):
         
         print(f"\n{'='*80}")
         print(f"Tournament Ranking Complete!")
-        print(f"Total unique comparisons: {len(comparison_cache)}")
-        if hasattr(comparison_cache, '_total_attempts'):
-            total_attempts = comparison_cache._total_attempts
-            cache_hits = comparison_cache._hits
-            cache_misses = len(comparison_cache)
-            print(f"Cache statistics:")
-            print(f"  - Total attempts: {total_attempts}")
-            print(f"  - Cache hits: {cache_hits} ({cache_hits/total_attempts*100:.1f}% hit rate)")
-            print(f"  - Cache misses (new comparisons): {cache_misses}")
-            print(f"  - LLM calls saved: {cache_hits}")
         print(f"{'='*80}\n")
         
         # Display final rankings
@@ -536,7 +494,6 @@ def LLM_tournament_style_ranking(fics, search_param):
     except KeyboardInterrupt:
         print(f"\n\n{'='*80}")
         print(f"Tournament interrupted! Partial rankings may be incomplete.")
-        print(f"Comparisons completed: {len(comparison_cache)}")
         print(f"{'='*80}\n")
         return fics
 
@@ -547,7 +504,7 @@ def main():
     search_param = "less than 10k words, but more than 3k. it needs to be aidrian chase x reader. no angst, smut is nice but not required. happy endings preferred. no anal at all, or watersports or oviposition. no fics that use placeholders like (y/n) or (name)."
     fics = get_pages(url, pages)
     random.shuffle(fics)  # shuffle fics to avoid any order bias (shuffles in-place)
-    LLM_make_mark_scheme(search_param)
+    # LLM_make_mark_scheme(search_param)
     
     # Choose ranking method:
     # Option 1: Use tournament ranking (merge sort - optimal O(N log N))
