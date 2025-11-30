@@ -197,7 +197,7 @@ def get_pages(url, pages):
     return fics
 
 def LLM_filter_and_sort(fics, search_param):
-    ai = OllamaAI("goekdenizguelmez/JOSIEFIED-Qwen3:4b", 2, max_history_pairs=2)
+    ai = OllamaAI("goekdenizguelmez/JOSIEFIED-Qwen3:4b", 2, max_history_pairs=1)
     print(f"Sending {len(fics)} fics to LLM for filtering and sorting...")
     print("(Press Ctrl+C to stop ranking and continue with ranked fics only)")
     x = 0
@@ -270,7 +270,7 @@ def LLM_make_mark_scheme(search_param):
 def main():
     # url, pages, search_param = get_user_input()
     url = r"https://archiveofourown.org/works?work_search%5Bsort_column%5D=kudos_count&work_search%5Bother_tag_names%5D=&exclude_work_search%5Barchive_warning_ids%5D%5B%5D=19&exclude_work_search%5Barchive_warning_ids%5D%5B%5D=20&exclude_work_search%5Bfandom_ids%5D%5B%5D=236208&exclude_work_search%5Bfandom_ids%5D%5B%5D=58290284&exclude_work_search%5Bfandom_ids%5D%5B%5D=115270897&exclude_work_search%5Brelationship_ids%5D%5B%5D=63193414&exclude_work_search%5Brelationship_ids%5D%5B%5D=5276584&work_search%5Bexcluded_tag_names%5D=&work_search%5Bcrossover%5D=F&work_search%5Bcomplete%5D=T&work_search%5Bwords_from%5D=&work_search%5Bwords_to%5D=&work_search%5Bdate_from%5D=&work_search%5Bdate_to%5D=&work_search%5Bquery%5D=&work_search%5Blanguage_id%5D=en&commit=Sort+and+Filter&tag_id=Adrian+Chase*s*Reader"
-    pages = 2
+    pages = 1
     search_param = "less than 10k words, but more than 3k. it needs to be aidrian chase x reader. no angst, smut is nice but not required. happy endings preferred. no anal sex or watersports or oviposition."
     fics = get_pages(url, pages)
     random.shuffle(fics)  # shuffle fics to avoid any order bias (shuffles in-place)
