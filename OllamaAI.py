@@ -4,7 +4,7 @@ import subprocess
 
 
 class OllamaAI:
-    def __init__(self, model: str = "dolphin-llama3", preset_mode: int = 0, discard_token: str = None, documents: str = None):
+    def __init__(self, model: str = "goekdenizguelmez/JOSIEFIED-Qwen3:4b", preset_mode: int = 0, discard_token: str = None, documents: str = None):
         """
         Initialize the OllamaAI class.
 
@@ -129,8 +129,35 @@ class OllamaAI:
         
 
 if __name__ == "__main__":
-    ai = OllamaAI("deepseek-coder-v2", 5)
+    ai = OllamaAI("goekdenizguelmez/JOSIEFIED-Qwen3:4b", 0)
     while True:
         message = input("\n\033[38;5;208m>>> ")
+        message = """
+work_id: 45849109
+title: TOOL-ASSISTED SPEEDRUN
+author: karmatens
+author_url: https://archiveofourown.org/users/karmatens/pseuds/karmatens
+url: https://archiveofourown.org/works/45849109
+fandoms: ULTRAKILL (Video Game)
+rating: Explicit
+warnings: No Archive Warnings Apply
+category: Other
+is_complete: True
+publish_date: 19 Mar 2023
+warnings_tags: No Archive Warnings Apply
+relationships: Gabriel/V1 (ULTRAKILL)
+characters: Gabriel (ULTRAKILL), V1 (ULTRAKILL)
+freeform_tags: Speedrunning, Video Game Mechanics, Character Study, Religious Imagery & Symbolism, Loss of Virginity, Robot Sex, Artificial Vagina, Cum Consumption, Size Difference, Power Bottoming, Degradation, Overstimulation, Fucking Machines, (Literally & Figuratively), Metaphysics
+summary: Optimization is V1’s specialty. From projectile punching to explosion-propelled feats of acceleration, V1 was made to make itself better: faster. To achieve maximum performance, it opts to optimize its energy usage. A more efficient source of biofuel may exist—but V1 needs a means to extract it. A particular peripheral used by Mindflayers seems promising. V1 intends to test it on Gabriel. There must be something better than blood.
+language: English
+word_count: 12602
+chapters: 1/1
+chapters_complete: True
+comments: 232
+kudos: 2612
+bookmarks: 415
+hits: 41850
+
+USER INPUT: i am looking for  work that is compleated, has more than 5000 words, and is 2+ chapters long."""
         response = ai.send_message(message)
         print("\n\033[38;5;33mAI:", response)
