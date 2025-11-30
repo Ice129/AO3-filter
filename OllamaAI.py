@@ -95,8 +95,11 @@ class OllamaAI:
         conversation = [msg for msg in self.chat_history if msg.get("role") != "system"]
         
         # Keep only last N pairs (2N messages: N user + N assistant)
+        # If max_history_pairs is 0, clear all conversation history
         max_messages = self.max_history_pairs * 2
-        if len(conversation) > max_messages:
+        if max_messages == 0:
+            conversation = []
+        elif len(conversation) > max_messages:
             conversation = conversation[-max_messages:]
         
         # Rebuild chat history: system message(s) + trimmed conversation

@@ -183,17 +183,6 @@ def get_pages(url, pages):
     print(f"Successfully scraped {len(fics)} works from {pages} page(s)")
     print(f"{'='*80}\n")
     
-    # # Print first work as example
-    # if fics:
-    #     print("Example of first work scraped:")
-    #     print(f"{'='*80}")
-    #     for key, value in fics[0].items():
-    #         if isinstance(value, list):
-    #             print(f"{key}: {', '.join(value) if value else 'N/A'}")
-    #         else:
-    #             print(f"{key}: {value}")
-    #     print(f"{'='*80}\n")
-    
     return fics
 
 def LLM_filter_and_sort(fics, search_param):
@@ -266,16 +255,308 @@ def LLM_make_mark_scheme(search_param):
     
     return response
 
+def create_markdown_output(fics, filename="filtered_fics.md"):
+    """
+    Creates a markdown file with all fics information formatted nicely.
+    
+    Args:
+        fics: List of fic dictionaries with their information
+        filename: Name of the output markdown file
+    """
+    with open(filename, 'w', encoding='utf-8') as f:
+        # Write header
+        f.write("# Filtered AO3 Fics\n\n")
+        f.write(f"**Total fics:** {len(fics)}\n\n")
+        f.write("---\n\n")
+        
+        # Write each fic
+        for idx, fic in enumerate(fics, 1):
+            # Title with link
+            f.write(f"## {idx}. [{fic['title']}]({fic['url']})\n\n")
+            
+            # Tournament Rank if available
+            if 'tournament_rank' in fic:
+                f.write(f"**Tournament Rank:** {fic['tournament_rank']}\n\n")
+            
+            # LLM Rank if available
+            if 'llm_rank' in fic:
+                f.write(f"**LLM Rank:** {fic['llm_rank']}\n\n")
+            
+            # Basic info
+            f.write(f"**Rating:** {fic['rating']}  \n")
+            f.write(f"**Category:** {fic['category']}  \n")
+            f.write(f"**Status:** {'Complete' if fic['is_complete'] else 'In Progress'}  \n")
+            f.write(f"**Chapters:** {fic['chapters']}  \n")
+            f.write(f"**Word Count:** {fic['word_count']:,}  \n\n")
+            
+            # Fandoms
+            if fic['fandoms']:
+                f.write(f"**Fandoms:** {' '.join(f'`{fandom}`' for fandom in fic['fandoms'])}  \n\n")
+            
+            # Warnings
+            if fic['warnings'] != 'N/A':
+                f.write(f"**Warnings:** {fic['warnings']}  \n\n")
+            
+            # Relationships
+            if fic['relationships']:
+                f.write(f"**Relationships:** {' '.join(f'`{rel}`' for rel in fic['relationships'])}  \n\n")
+            
+            # Characters
+            if fic['characters']:
+                f.write(f"**Characters:** {' '.join(f'`{char}`' for char in fic['characters'])}  \n\n")
+            
+            # Tags
+            if fic['freeform_tags']:
+                f.write(f"**Tags:** {' '.join(f'`{tag}`' for tag in fic['freeform_tags'])}  \n\n")
+            
+            # Summary
+            if fic['summary'] != 'N/A':
+                f.write(f"**Summary:**\n\n")
+                f.write(f"> {fic['summary']}\n\n")
+            
+            # Stats
+            f.write(f"**Stats:** {fic['kudos']} kudos | {fic['comments']} comments  \n\n")
+            
+            # Separator
+            f.write("---\n\n")
+    
+    print(f"\n{'='*80}")
+    print(f"Markdown file created: {filename}")
+    print(f"{'='*80}\n")
+
+def llm_compare_pair(fic1, fic2, ai, search_param, comparison_cache):
+    """
+    Compare two fics using LLM and return True if fic1 is better than fic2.
+    Uses caching to avoid redundant comparisons.
+    
+    Args:
+        fic1: First fic dictionary
+        fic2: Second fic dictionary
+        ai: OllamaAI instance
+        search_param: User's search criteria
+        comparison_cache: Dictionary to cache comparison results
+    
+    Returns:
+        True if fic1 is better, False if fic2 is better
+    """
+    # Track total attempts
+    if hasattr(comparison_cache, '_total_attempts'):
+        comparison_cache._total_attempts += 1
+    
+    # Create cache key using URLs (order-independent) to handle duplicate titles
+    cache_key = tuple(sorted([fic1.get('url', fic1['title']), fic2.get('url', fic2['title'])]))  
+    
+    # Check cache first
+    if cache_key in comparison_cache:
+        result = comparison_cache[cache_key]
+        # Track cache hit (increment counter if it exists)
+        if hasattr(comparison_cache, '_hits'):
+            comparison_cache._hits += 1
+        print(f"{'  ' * 8}💾 Cache hit! Skipping LLM call.")
+        # Return True if fic1 was the winner in cached result
+        return result == fic1.get('url', fic1['title'])
+    
+    # Format fic summaries
+    fic1_tags = ', '.join(fic1.get('freeform_tags', [])) or 'None'
+    fic2_tags = ', '.join(fic2.get('freeform_tags', [])) or 'None'
+    fic1_summary = f"Title: {fic1['title']}\nSummary: {fic1['summary']}\nTags: {fic1_tags}\nWord Count: {fic1['word_count']}\nKudos: {fic1['kudos']}"
+    fic2_summary = f"Title: {fic2['title']}\nSummary: {fic2['summary']}\nTags: {fic2_tags}\nWord Count: {fic2['word_count']}\nKudos: {fic2['kudos']}"
+    
+    # Ask LLM to compare
+    prompt = f"Compare these two fics based on the user's preferences: {search_param}\n\nFic 1:\n{fic1_summary}\n\nFic 2:\n{fic2_summary}\n\nWhich fic better matches the search criteria? Respond with ONLY '<Fic 1>' or '<Fic 2>'."
+    response = ai.send_message(prompt)
+    
+    # Parse response - check for exact format markers first, then fallback to case-insensitive
+    response_lower = response.lower()
+    if "<fic 1>" in response_lower or ("fic 1" in response_lower and "fic 2" not in response_lower):
+        winner = fic1.get('url', fic1['title'])
+        result = True
+    elif "<fic 2>" in response_lower or ("fic 2" in response_lower and "fic 1" not in response_lower):
+        winner = fic2.get('url', fic2['title'])
+        result = False
+    else:
+        # Unclear response - use random selection as fallback
+        result = random.choice([True, False])
+        winner = fic1.get('url', fic1['title']) if result else fic2.get('url', fic2['title'])
+        print(f"  ⚠ Unclear LLM response: '{response[:50]}...'. Randomly selected: '{fic1['title'] if result else fic2['title']}'")
+    
+    # Cache the result
+    comparison_cache[cache_key] = winner
+    
+    return result
+
+def merge_sorted_lists(left, right, ai, search_param, comparison_cache, depth):
+    """
+    Merge two sorted lists of fics by comparing items at the boundaries.
+    
+    Args:
+        left: Sorted list of fics (best to worst)
+        right: Sorted list of fics (best to worst)
+        ai: OllamaAI instance
+        search_param: User's search criteria
+        comparison_cache: Dictionary to cache comparison results
+        depth: Current recursion depth for logging
+    
+    Returns:
+        Merged sorted list (best to worst)
+    """
+    result = []
+    i = j = 0
+    comparisons_this_merge = 0
+    
+    print(f"{'  ' * depth}Merging {len(left)} and {len(right)} fics...")
+    
+    while i < len(left) and j < len(right):
+        # Compare front items from each list
+        if llm_compare_pair(left[i], right[j], ai, search_param, comparison_cache):
+            result.append(left[i])
+            i += 1
+        else:
+            result.append(right[j])
+            j += 1
+        comparisons_this_merge += 1
+    
+    # Append remaining items
+    result.extend(left[i:])
+    result.extend(right[j:])
+    
+    print(f"{'  ' * depth}✓ Merged into {len(result)} fics ({comparisons_this_merge} comparisons)")
+    
+    return result
+
+def merge_sort_fics(fics, ai, search_param, comparison_cache, depth=0):
+    """
+    Recursively sort fics using merge sort with LLM comparisons.
+    
+    Args:
+        fics: List of fic dictionaries to sort
+        ai: OllamaAI instance
+        search_param: User's search criteria
+        comparison_cache: Dictionary to cache comparison results
+        depth: Current recursion depth for logging
+    
+    Returns:
+        Sorted list of fics from best (rank 1) to worst (rank N)
+    """
+    # Base case: 0 or 1 items are already sorted
+    if len(fics) <= 1:
+        return fics
+    
+    # Base case: 2 items - direct comparison
+    if len(fics) == 2:
+        print(f"{'  ' * depth}Comparing: '{fics[0]['title']}' vs '{fics[1]['title']}'")
+        if llm_compare_pair(fics[0], fics[1], ai, search_param, comparison_cache):
+            return [fics[0], fics[1]]
+        else:
+            return [fics[1], fics[0]]
+    
+    # Recursive case: divide and conquer
+    mid = len(fics) // 2
+    print(f"{'  ' * depth}Dividing {len(fics)} fics into {mid} and {len(fics) - mid}...")
+    
+    left_sorted = merge_sort_fics(fics[:mid], ai, search_param, comparison_cache, depth + 1)
+    right_sorted = merge_sort_fics(fics[mid:], ai, search_param, comparison_cache, depth + 1)
+    
+    return merge_sorted_lists(left_sorted, right_sorted, ai, search_param, comparison_cache, depth)
+
+def LLM_tournament_style_ranking(fics, search_param):
+    """
+    Rank fics using merge sort with LLM pairwise comparisons.
+    Establishes absolute rankings from 1st to Nth place.
+    
+    Args:
+        fics: List of fic dictionaries to rank
+        search_param: User's search criteria
+    
+    Returns:
+        List of fics sorted from best (rank 1) to worst (rank N)
+    """
+    if not fics:
+        return []
+    
+    if not search_param or not isinstance(search_param, str):
+        raise ValueError("search_param must be a non-empty string")
+    
+    # Validate that fics have required fields
+    required_fields = ['title', 'summary', 'freeform_tags', 'word_count', 'kudos']
+    for fic in fics:
+        missing_fields = [field for field in required_fields if field not in fic]
+        if missing_fields:
+            raise ValueError(f"Fic '{fic.get('title', 'Unknown')}' missing required fields: {missing_fields}")
+    
+    ai = OllamaAI("goekdenizguelmez/JOSIEFIED-Qwen3:4b", 3, max_history_pairs=0)
+    
+    # Create cache with hit tracking
+    comparison_cache = {}
+    comparison_cache._hits = 0  # Track cache hits
+    comparison_cache._total_attempts = 0  # Track total comparison attempts
+    
+    import math
+    
+    print(f"\n{'='*80}")
+    print(f"Starting Tournament-Style Ranking (Merge Sort Algorithm)")
+    print(f"Total fics: {len(fics)}")
+    # More accurate formula: N*log2(N) is average, worst case can be up to N*log2(N) + N
+    if len(fics) > 1:
+        expected_min = int(len(fics) * math.log2(len(fics)) * 0.5)
+        expected_max = int(len(fics) * math.log2(len(fics)))
+        print(f"Expected comparisons: ~{expected_min} to {expected_max}")
+    print(f"{'='*80}\n")
+    
+    try:
+        # Perform merge sort
+        sorted_fics = merge_sort_fics(fics, ai, search_param, comparison_cache, depth=0)
+        
+        # Assign tournament ranks (1 = best)
+        for rank, fic in enumerate(sorted_fics, 1):
+            fic['tournament_rank'] = rank
+        
+        print(f"\n{'='*80}")
+        print(f"Tournament Ranking Complete!")
+        print(f"Total unique comparisons: {len(comparison_cache)}")
+        if hasattr(comparison_cache, '_total_attempts'):
+            total_attempts = comparison_cache._total_attempts
+            cache_hits = comparison_cache._hits
+            cache_misses = len(comparison_cache)
+            print(f"Cache statistics:")
+            print(f"  - Total attempts: {total_attempts}")
+            print(f"  - Cache hits: {cache_hits} ({cache_hits/total_attempts*100:.1f}% hit rate)")
+            print(f"  - Cache misses (new comparisons): {cache_misses}")
+            print(f"  - LLM calls saved: {cache_hits}")
+        print(f"{'='*80}\n")
+        
+        # Display final rankings
+        print("Final Tournament Rankings:")
+        for rank, fic in enumerate(sorted_fics, 1):
+            print(f"  {rank}. '{fic['title']}' (Word Count: {fic['word_count']:,})")
+        print()
+        
+        return sorted_fics
+        
+    except KeyboardInterrupt:
+        print(f"\n\n{'='*80}")
+        print(f"Tournament interrupted! Partial rankings may be incomplete.")
+        print(f"Comparisons completed: {len(comparison_cache)}")
+        print(f"{'='*80}\n")
+        return fics
 
 def main():
     # url, pages, search_param = get_user_input()
     url = r"https://archiveofourown.org/works?work_search%5Bsort_column%5D=kudos_count&work_search%5Bother_tag_names%5D=&exclude_work_search%5Barchive_warning_ids%5D%5B%5D=19&exclude_work_search%5Barchive_warning_ids%5D%5B%5D=20&exclude_work_search%5Bfandom_ids%5D%5B%5D=236208&exclude_work_search%5Bfandom_ids%5D%5B%5D=58290284&exclude_work_search%5Bfandom_ids%5D%5B%5D=115270897&exclude_work_search%5Brelationship_ids%5D%5B%5D=63193414&exclude_work_search%5Brelationship_ids%5D%5B%5D=5276584&work_search%5Bexcluded_tag_names%5D=&work_search%5Bcrossover%5D=F&work_search%5Bcomplete%5D=T&work_search%5Bwords_from%5D=&work_search%5Bwords_to%5D=&work_search%5Bdate_from%5D=&work_search%5Bdate_to%5D=&work_search%5Bquery%5D=&work_search%5Blanguage_id%5D=en&commit=Sort+and+Filter&tag_id=Adrian+Chase*s*Reader"
     pages = 1
-    search_param = "less than 10k words, but more than 3k. it needs to be aidrian chase x reader. no angst, smut is nice but not required. happy endings preferred. no anal sex or watersports or oviposition."
+    search_param = "less than 10k words, but more than 3k. it needs to be aidrian chase x reader. no angst, smut is nice but not required. happy endings preferred. no anal at all, or watersports or oviposition. no fics that use placeholders like (y/n) or (name)."
     fics = get_pages(url, pages)
     random.shuffle(fics)  # shuffle fics to avoid any order bias (shuffles in-place)
-    mark_scheme = LLM_make_mark_scheme(search_param)
-    ordered_fics = LLM_filter_and_sort(fics, search_param)
+    LLM_make_mark_scheme(search_param)
+    
+    # Choose ranking method:
+    # Option 1: Use tournament ranking (merge sort - optimal O(N log N))
+    ordered_fics = LLM_tournament_style_ranking(fics, search_param)
+    
+    # Option 2: Use original scoring system (uncomment to use instead)
+    # ordered_fics = LLM_filter_and_sort(fics, search_param)
+    
+    create_markdown_output(ordered_fics)
 
 if __name__ == "__main__":
     main()
