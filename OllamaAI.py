@@ -28,8 +28,9 @@ class OllamaAI:
         """
         self.model = model
         self.options = {
-            "repeat_penalty": 1.6,
-            "repeat_last_n": -1,
+            "repeat_penalty": 1.3,
+            "repeat_last_n": 40,
+            "think": True,
             "num_ctx": self.get_context_window_size(self.model),
         }
         self.discard_token = discard_token #########################################################
@@ -129,7 +130,7 @@ class OllamaAI:
         
 
 if __name__ == "__main__":
-    ai = OllamaAI("goekdenizguelmez/JOSIEFIED-Qwen3:4b", 0)
+    ai = OllamaAI("deepseek-r1:14b", 0)
     while True:
         message = input("\n\033[38;5;208m>>> ")
         message = """

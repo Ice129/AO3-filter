@@ -1,5 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
+from OllamaAI import OllamaAI
 
 # This script fetches the HTML content of AO3, reads all the info on all the displayed fics
 # and extracts + stores the title, author, tags, kudos, word count, summary, and URL of each fic.
@@ -142,30 +143,30 @@ def scrape_AO3_page(base_url):
                     hits = 0
         
         fic_info = {
-            'work_id': work_id,
+            # 'work_id': work_id,
             'title': title,
-            'author': author,
-            'author_url': author_url,
+            # 'author': author,
+            # 'author_url': author_url,
             'url': url,
             'fandoms': fandoms,
             'rating': rating,
             'warnings': warnings,
             'category': category,
             'is_complete': is_complete,
-            'publish_date': publish_date,
+            # 'publish_date': publish_date,
             'warnings_tags': warnings_tags,
             'relationships': relationships,
             'characters': characters,
             'freeform_tags': freeform_tags,
             'summary': summary,
-            'language': language,
+            # 'language': language,
             'word_count': word_count,
             'chapters': chapters,
             'chapters_complete': chapters_complete,
             'comments': comments,
             'kudos': kudos,
-            'bookmarks': bookmarks,
-            'hits': hits
+            # 'bookmarks': bookmarks,
+            # 'hits': hits
         }
         fics.append(fic_info)
     return fics
@@ -181,31 +182,65 @@ def get_pages(url, pages):
     print(f"Successfully scraped {len(fics)} works from {pages} page(s)")
     print(f"{'='*80}\n")
     
-    # Print first work as example
-    if fics:
-        print("Example of first work scraped:")
-        print(f"{'='*80}")
-        for key, value in fics[0].items():
-            if isinstance(value, list):
-                print(f"{key}: {', '.join(value) if value else 'N/A'}")
-            else:
-                print(f"{key}: {value}")
-        print(f"{'='*80}\n")
-    
-    # at this point, fics should contain all the scraped fanfics
-    # next part of the program filters and sorts with a local LLM based on user input
-    # this part is not to be implemented until page scraping is working correctly
+    # # Print first work as example
+    # if fics:
+    #     print("Example of first work scraped:")
+    #     print(f"{'='*80}")
+    #     for key, value in fics[0].items():
+    #         if isinstance(value, list):
+    #             print(f"{key}: {', '.join(value) if value else 'N/A'}")
+    #         else:
+    #             print(f"{key}: {value}")
+    #     print(f"{'='*80}\n")
     
     return fics
 
 def LLM_filter_and_sort(fics, search_param):
-    # placeholder function for future LLM filtering and sorting
-    return "LLM response placeholder", fics
+    ai = OllamaAI("goekdenizguelmez/JOSIEFIED-Qwen3:4b", 0)
+    print(f"Sending {len(fics)} fics to LLM for filtering and sorting...")
+    print("(Press Ctrl+C to stop ranking and continue with ranked fics only)")
+    x = 0
+    try:
+        for fic in fics:
+            fic_summary = f"Title: {fic['title']}\nSummary: {fic['summary']}\nTags: {', '.join(fic['freeform_tags'])}\nWord Count: {fic['word_count']}\nKudos: {fic['kudos']}\n\n"
+            response = ai.send_message(f"fic info:\n{fic_summary}\n\nUSER SEARCH PARAMETER: {search_param}")
+            # rank is extracted from response in format "<rank: XX>"
+            # fic_ranking = int(response.split("<rank: ")[1].split(">")[0])
+            word_count_rank = int(response.split("<Word Count: ")[1].split(">")[0])
+            relationship_rank = int(response.split("<Relationship: ")[1].split(">")[0])
+            overall_relevance_rank = int(response.split("<Overall Relevance: ")[1].split(">")[0])
+            fic_ranking = word_count_rank + relationship_rank + overall_relevance_rank
+            fic['llm_rank'] = fic_ranking
+            ai.wipe_chat_history()
+            x += 1
+            
+            #debug print
+            print(f"\n---\nAI response for Fic {x}:\n{response}\n---")
+            
+            print(f"Fic {x}: '{fic['title']}' assigned LLM rank: {fic_ranking}")
+    except KeyboardInterrupt:
+        print(f"\n\n{'='*80}")
+        print(f"Ranking interrupted! Proceeding with {x} ranked fics out of {len(fics)} total.")
+        print(f"{'='*80}\n")
+    
+    # filter to only fics that have been ranked (have 'llm_rank' key)
+    ranked_fics = [fic for fic in fics if 'llm_rank' in fic]
+    
+    # sort fics by llm_rank
+    ordered_fics = sorted(ranked_fics, key=lambda x: x['llm_rank'])
+    print(f"\n{'='*80}")
+    print(f"Fics sorted by LLM ranking ({len(ordered_fics)} fics):")
+    for fic in ordered_fics:
+        print(f"Title: {fic['title']}, LLM Rank: {fic['llm_rank']}")
+    return ordered_fics
 
 def main():
-    url, pages, search_param = get_user_input()
+    # url, pages, search_param = get_user_input()
+    url = r"https://archiveofourown.org/works?work_search%5Bsort_column%5D=kudos_count&work_search%5Bother_tag_names%5D=&exclude_work_search%5Barchive_warning_ids%5D%5B%5D=19&exclude_work_search%5Barchive_warning_ids%5D%5B%5D=20&exclude_work_search%5Bfandom_ids%5D%5B%5D=236208&exclude_work_search%5Bfandom_ids%5D%5B%5D=58290284&exclude_work_search%5Bfandom_ids%5D%5B%5D=115270897&exclude_work_search%5Brelationship_ids%5D%5B%5D=63193414&exclude_work_search%5Brelationship_ids%5D%5B%5D=5276584&work_search%5Bexcluded_tag_names%5D=&work_search%5Bcrossover%5D=F&work_search%5Bcomplete%5D=T&work_search%5Bwords_from%5D=&work_search%5Bwords_to%5D=&work_search%5Bdate_from%5D=&work_search%5Bdate_to%5D=&work_search%5Bquery%5D=&work_search%5Blanguage_id%5D=en&commit=Sort+and+Filter&tag_id=Adrian+Chase*s*Reader"
+    pages = 3
+    search_param = "less than 10k words, but more thn 3k. it needs to be aidrian chase x reader. no angst, smut is nice but not required. happy endings preferred. no anal sex or watersports or oviposition."
     fics = get_pages(url, pages)
-    LLM_response, ordered_fics = LLM_filter_and_sort(fics, search_param)
+    ordered_fics = LLM_filter_and_sort(fics, search_param)
 
 if __name__ == "__main__":
     main()
