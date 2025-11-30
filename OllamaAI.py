@@ -4,36 +4,22 @@ import subprocess
 
 
 class OllamaAI:
-    def __init__(self, model: str = "goekdenizguelmez/JOSIEFIED-Qwen3:4b", preset_mode: int = 0, discard_token: str = None, documents: str = None):
+    def __init__(self, model: str = "goekdenizguelmez/JOSIEFIED-Qwen3:4b", preset_mode: int = 0, discard_token: str = None, documents: str = None, max_history_pairs: int = 3):
         """
         Initialize the OllamaAI class.
 
         model: str - The model that the AI should use for generating responses.
         preset_mode: int - The preset personality for the AI.
-
-        possible values for model:
-            'dolphin-llama3', 'deepseek-coder-v2'
-
-        possible values for preset_mode:
-            -1 - no preset\n
-            0 - normal\n
-            1 - horny\n
-            2 - evil\n
-            3 - chronicaly online\n
-            4 - just some normal guy\n
-            5 - angry\n
-            6 - ai pretending to be human\n
-            7 - ai trying to find out if the user is a human\n
-            8 - 3rd party to keep things on track\n
+        max_history_pairs: int - Maximum number of user-assistant message pairs to keep in history (default: 3).
         """
         self.model = model
         self.options = {
             "repeat_penalty": 1.3,
             "repeat_last_n": 40,
-            "think": True,
             "num_ctx": self.get_context_window_size(self.model),
         }
         self.discard_token = discard_token #########################################################
+        self.max_history_pairs = max_history_pairs
         self.__load_model_into_memory()
         self.preset_mode = preset_mode
         self.chat_history = []
@@ -82,6 +68,9 @@ class OllamaAI:
 
         response_message = {"role": "assistant", "content": response}
         self.chat_history.append(response_message)
+        
+        # Automatically trim chat history to maintain sliding window
+        self.__trim_chat_history()
 
         return response
 
@@ -92,6 +81,26 @@ class OllamaAI:
         )
         response_json = response.json()
         return response_json["message"]["content"]
+    
+    def __trim_chat_history(self):
+        """
+        Trim chat history to keep only system message + last N user-assistant pairs.
+        Maintains a sliding window of recent conversations for contextual ranking.
+        """
+        if len(self.chat_history) <= 1:  # Only system message or empty
+            return
+        
+        # Separate system message from conversation
+        system_messages = [msg for msg in self.chat_history if msg.get("role") == "system"]
+        conversation = [msg for msg in self.chat_history if msg.get("role") != "system"]
+        
+        # Keep only last N pairs (2N messages: N user + N assistant)
+        max_messages = self.max_history_pairs * 2
+        if len(conversation) > max_messages:
+            conversation = conversation[-max_messages:]
+        
+        # Rebuild chat history: system message(s) + trimmed conversation
+        self.chat_history = system_messages + conversation
     
     def speculative_response(self, message): ###############################################################
         message = {
@@ -110,6 +119,10 @@ class OllamaAI:
         response_json = response.json()
     
     def wipe_chat_history(self):
+        """
+        Reset chat history to only the system message.
+        This clears all conversation context including the sliding window.
+        """
         self.chat_history = []
         if self.preset_mode != -1:
             self.__append_system_message()
