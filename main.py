@@ -1,39 +1,122 @@
-import requests
-from bs4 import BeautifulSoup
-from OllamaAI import OllamaAI
+import math
 import random
+import time
 
-# This script fetches the HTML content of AO3, reads all the info on all the displayed fics
-# and extracts + stores the title, author, tags, kudos, word count, summary, and URL of each fic.
-# then goes to the next page and repeats the process x many times.
-# origional url is given by user, as the filters will be aplied before this script
+from bs4 import BeautifulSoup
+
+from OllamaAI import OllamaAI
+
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 def get_user_input():
-    # url example: https://archiveofourown.org/works/search?work_search%5Bquery%5D=ultrakill&work_search%5Btitle%5D=&work_search%5Bcreators%5D=&work_search%5Brevised_at%5D=&work_search%5Bcomplete%5D=T&work_search%5Bcrossover%5D=&work_search%5Bsingle_chapter%5D=0&work_search%5Bword_count%5D=&work_search%5Blanguage_id%5D=&work_search%5Bfandom_names%5D=&work_search%5Brating_ids%5D=13&work_search%5Bcharacter_names%5D=&work_search%5Brelationship_names%5D=&work_search%5Bfreeform_names%5D=&work_search%5Bhits%5D=&work_search%5Bkudos_count%5D=&work_search%5Bcomments_count%5D=&work_search%5Bbookmarks_count%5D=&work_search%5Bsort_column%5D=kudos_count&work_search%5Bsort_direction%5D=desc&commit=Search
-    url = str(input("Enter the AO3 URL with desired filters applied: "))
+    """Get user input for scraping parameters."""
+    url = input("Enter the AO3 URL with desired filters applied: ")
     pages = int(input("Enter the number of pages to scrape: "))
-    search_param = str(input("Enter what type of works you are interested in, in natural language: "))
+    search_param = input("Enter what type of works you are interested in, in natural language: ")
     return url, pages, search_param
 
-def scrape_AO3_page(base_url):
-    response = requests.get(base_url)
-    soup = BeautifulSoup(response.text, 'html.parser')
+def fetch_page_with_selenium(url):
+    """
+    Fetch AO3 page content using Selenium.
+    
+    Args:
+        url: The URL to fetch
+    
+    Returns:
+        HTML content as string, or None if it fails
+    """
+    try:
+        
+        print("\n" + "="*80)
+        print("Fetching page with Selenium...")
+        print("="*80 + "\n")
+        
+        # Set up Chrome options for headless browsing
+        chrome_options = Options()
+        chrome_options.add_argument('--headless=new')
+        chrome_options.add_argument('--disable-gpu')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36')
+        
+        print("Initializing Chrome browser...")
+        driver = webdriver.Chrome(options=chrome_options)
+        
+        try:
+            print(f"Navigating to: {url}")
+            driver.get(url)
+            
+            print("Waiting for page to load...")
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            time.sleep(3)
+            
+            html_content = driver.page_source
+            print(f"✓ Successfully fetched page ({len(html_content)} bytes)\n")
+            print("="*80 + "\n")
+            
+            return html_content
+            
+        finally:
+            driver.quit()
+            
+    except ImportError:
+        print("Error: Selenium not installed. Install with: pip install selenium")
+        return None
+    except Exception as e:
+        print(f"Error fetching page with Selenium: {str(e)}")
+        return None
+
+
+def extract_stat_value(stats, class_name):
+    """
+    Extract integer stat value from AO3 stats section.
+    
+    Args:
+        stats: BeautifulSoup stats element
+        class_name: CSS class name to search for
+    
+    Returns:
+        Integer value or 0 if not found
+    """
+    tag = stats.find('dd', class_=class_name)
+    if not tag:
+        return 0
+    
+    link = tag.find('a')
+    text = link.get_text(strip=True) if link else tag.get_text(strip=True)
+    
+    try:
+        return int(text.replace(',', ''))
+    except ValueError:
+        return 0
+
+
+def parse_ao3_html(html_content):
+    """
+    Parse AO3 HTML content and extract fic information.
+    
+    Args:
+        html_content: HTML string to parse
+    
+    Returns:
+        List of fic dictionaries
+    """
+    soup = BeautifulSoup(html_content, 'html.parser')
     works = soup.find_all('li', id=lambda x: x and x.startswith('work_'))
     fics = []
+    
     for work in works:
-        # Extract work ID
-        work_id = work.get('id', '').replace('work_', '') if work.get('id') else 'N/A'
-        
         # Extract title and URL
         title_tag = work.find('h4', class_='heading')
         title_link = title_tag.find('a') if title_tag else None
         title = title_link.get_text(strip=True) if title_link else 'N/A'
         url = f"https://archiveofourown.org{title_link['href']}" if title_link and title_link.get('href') else 'N/A'
-        
-        # Extract author
-        author_tag = work.find('a', rel='author')
-        author = author_tag.get_text(strip=True) if author_tag else 'Anonymous'
-        author_url = f"https://archiveofourown.org{author_tag['href']}" if author_tag and author_tag.get('href') else 'N/A'
         
         # Extract fandoms
         fandom_heading = work.find('h5', class_='fandoms')
@@ -59,10 +142,6 @@ def scrape_AO3_page(base_url):
             complete_tag = required_tags.find('span', class_='complete-yes')
             is_complete = complete_tag is not None
         
-        # Extract publish date
-        date_tag = work.find('p', class_='datetime')
-        publish_date = date_tag.get_text(strip=True) if date_tag else 'N/A'
-        
         # Extract all tags by category
         tags_section = work.find('ul', class_='tags')
         warnings_tags = []
@@ -82,102 +161,112 @@ def scrape_AO3_page(base_url):
         
         # Extract stats
         stats = work.find('dl', class_='stats')
-        
-        language = 'N/A'
         word_count = 0
         chapters = 'N/A'
         chapters_complete = False
         comments = 0
         kudos = 0
-        bookmarks = 0
-        hits = 0
         
         if stats:
-            language_tag = stats.find('dd', class_='language')
-            language = language_tag.get_text(strip=True) if language_tag else 'N/A'
-            
-            words_tag = stats.find('dd', class_='words')
-            if words_tag:
-                try:
-                    word_count = int(words_tag.get_text(strip=True).replace(',', ''))
-                except ValueError:
-                    word_count = 0
+            word_count = extract_stat_value(stats, 'words')
             
             chapters_tag = stats.find('dd', class_='chapters')
             if chapters_tag:
                 chapters = chapters_tag.get_text(strip=True)
-                # Check if chapters are complete (e.g., "5/5" vs "3/5")
                 if '/' in chapters:
                     parts = chapters.split('/')
                     if parts[0] == parts[1]:
                         chapters_complete = True
             
-            comments_tag = stats.find('dd', class_='comments')
-            if comments_tag:
-                comments_link = comments_tag.find('a')
-                try:
-                    comments = int(comments_link.get_text(strip=True).replace(',', '')) if comments_link else 0
-                except ValueError:
-                    comments = 0
-            
-            kudos_tag = stats.find('dd', class_='kudos')
-            if kudos_tag:
-                kudos_link = kudos_tag.find('a')
-                try:
-                    kudos = int(kudos_link.get_text(strip=True).replace(',', '')) if kudos_link else 0
-                except ValueError:
-                    kudos = 0
-            
-            bookmarks_tag = stats.find('dd', class_='bookmarks')
-            if bookmarks_tag:
-                bookmarks_link = bookmarks_tag.find('a')
-                try:
-                    bookmarks = int(bookmarks_link.get_text(strip=True).replace(',', '')) if bookmarks_link else 0
-                except ValueError:
-                    bookmarks = 0
-            
-            hits_tag = stats.find('dd', class_='hits')
-            if hits_tag:
-                try:
-                    hits = int(hits_tag.get_text(strip=True).replace(',', ''))
-                except ValueError:
-                    hits = 0
+            comments = extract_stat_value(stats, 'comments')
+            kudos = extract_stat_value(stats, 'kudos')
         
         fic_info = {
-            # 'work_id': work_id,
             'title': title,
-            # 'author': author,
-            # 'author_url': author_url,
             'url': url,
             'fandoms': fandoms,
             'rating': rating,
             'warnings': warnings,
             'category': category,
             'is_complete': is_complete,
-            # 'publish_date': publish_date,
             'warnings_tags': warnings_tags,
             'relationships': relationships,
             'characters': characters,
             'freeform_tags': freeform_tags,
             'summary': summary,
-            # 'language': language,
             'word_count': word_count,
             'chapters': chapters,
             'chapters_complete': chapters_complete,
             'comments': comments,
             'kudos': kudos,
-            # 'bookmarks': bookmarks,
-            # 'hits': hits
         }
         fics.append(fic_info)
+    
     return fics
 
-def get_pages(url, pages):
+def scrape_ao3_page(base_url):
+    """
+    Scrape an AO3 page using Selenium.
+    
+    Args:
+        base_url: URL to scrape
+    
+    Returns:
+        List of fic dictionaries
+    """
+    html_content = fetch_page_with_selenium(base_url)
+    
+    if html_content is None:
+        print("Failed to fetch page. Skipping...\n")
+        return []
+    
+    return parse_ao3_html(html_content)
+
+
+def scrape_multiple_pages(url, pages):
+    """
+    Scrape multiple pages of AO3 search results.
+    
+    Args:
+        url: Base URL with search filters applied
+        pages: Number of pages to scrape
+    
+    Returns:
+        List of all fic dictionaries from all pages
+    """
     fics = []
-    for x in range(pages):
-        current_url = f"{url}&page={x+1}"
-        print(f"Scraping page {x+1}...")
-        fics.extend(scrape_AO3_page(current_url))
+    max_page_retries = 2
+    
+    for page_num in range(pages):
+        current_url = f"{url}&page={page_num + 1}"
+        print(f"Scraping page {page_num + 1}...")
+        
+        fics_on_page = []
+        for retry_count in range(max_page_retries):
+            try:
+                fics_on_page = scrape_ao3_page(current_url)
+                
+                if len(fics_on_page) == 0 and retry_count < max_page_retries - 1:
+                    print("No works found. Retrying in 10 seconds...")
+                    time.sleep(10)
+                else:
+                    break
+            except Exception as e:
+                print(f"Error scraping page: {str(e)}")
+                if retry_count < max_page_retries - 1:
+                    wait_time = (retry_count + 1) * 15
+                    print(f"Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"Failed to scrape page {page_num + 1} after {max_page_retries} attempts. Skipping...")
+        
+        fics.extend(fics_on_page)
+        
+        # # Rate limiting between pages
+        # if page_num < pages - 1:
+        #     wait_time = random.uniform(8, 15)
+        #     print(f"Waiting {wait_time:.1f} seconds before next page...")
+        #     time.sleep(wait_time)
     
     print(f"\n{'='*80}")
     print(f"Successfully scraped {len(fics)} works from {pages} page(s)")
@@ -185,146 +274,117 @@ def get_pages(url, pages):
     
     return fics
 
-def LLM_filter_and_sort(fics, search_param):
+def rank_fics_with_scoring(fics, search_param):
+    """
+    Rank fics using LLM scoring system (alternative to tournament ranking).
+    
+    Args:
+        fics: List of fic dictionaries to rank
+        search_param: User's search criteria
+    
+    Returns:
+        List of fics sorted by LLM score (highest to lowest)
+    """
     ai = OllamaAI("goekdenizguelmez/JOSIEFIED-Qwen3:4b", 2, max_history_pairs=1)
-    print(f"Sending {len(fics)} fics to LLM for filtering and sorting...")
+    print(f"Sending {len(fics)} fics to LLM for scoring...")
     print("(Press Ctrl+C to stop ranking and continue with ranked fics only)")
-    x = 0
+    
+    ranked_count = 0
     try:
         for fic in fics:
-            fic_summary = f"Title: {fic['title']}\nSummary: {fic['summary']}\nTags: {', '.join(fic['freeform_tags'])}\nWord Count: {fic['word_count']}\nKudos: {fic['kudos']}\n\n"
+            fic_summary = (
+                f"Title: {fic['title']}\n"
+                f"Summary: {fic['summary']}\n"
+                f"Tags: {', '.join(fic['freeform_tags'])}\n"
+                f"Word Count: {fic['word_count']}\n"
+                f"Kudos: {fic['kudos']}\n\n"
+            )
             response = ai.send_message(f"fic info:\n{fic_summary}\n\nUSER SEARCH PARAMETER: {search_param}")
-            # rank is extracted from response in format "<rank: XX>"
-            # fic_ranking = int(response.split("<rank: ")[1].split(">")[0])
+            
             try:
                 word_count_rank = int(response.split("<Word Count: ")[1].split(">")[0])
                 relationship_rank = int(response.split("<Relationship: ")[1].split(">")[0])
                 overall_relevance_rank = int(response.split("<Overall Relevance: ")[1].split(">")[0])
                 fic_ranking = word_count_rank + relationship_rank + overall_relevance_rank
             except (IndexError, ValueError):
-                # Default to rank of 5 for each category if parsing fails
-                word_count_rank = 5
-                relationship_rank = 5
-                overall_relevance_rank = 5
                 fic_ranking = 15
                 print(f"Warning: Failed to parse ranking for '{fic['title']}'. Using default rank of 15.")
+            
             fic['llm_rank'] = fic_ranking
-            # Chat history is now automatically maintained with sliding window (last 3 fics)
-            # ai.wipe_chat_history() - REMOVED to enable contextual ranking
-            x += 1
+            ranked_count += 1
             
-            #debug print
-            print(f"\n---\nAI response for Fic {x}:\n{response}\n---")
-            
-            print(f"Fic {x}: '{fic['title']}' assigned LLM rank: {fic_ranking}")
+            print(f"\n---\nAI response for Fic {ranked_count}:\n{response}\n---")
+            print(f"Fic {ranked_count}: '{fic['title']}' assigned LLM rank: {fic_ranking}")
     except KeyboardInterrupt:
         print(f"\n\n{'='*80}")
-        print(f"Ranking interrupted! Proceeding with {x} ranked fics out of {len(fics)} total.")
+        print(f"Ranking interrupted! Proceeding with {ranked_count} ranked fics out of {len(fics)} total.")
         print(f"{'='*80}\n")
     
-    # filter to only fics that have been ranked (have 'llm_rank' key)
     ranked_fics = [fic for fic in fics if 'llm_rank' in fic]
-    
-    # sort fics by llm_rank
     ordered_fics = sorted(ranked_fics, reverse=True, key=lambda x: x['llm_rank'])
+    
     print(f"\n{'='*80}")
     print(f"Fics sorted by LLM ranking ({len(ordered_fics)} fics):")
     for fic in ordered_fics:
         print(f"Title: {fic['title']}, LLM Rank: {fic['llm_rank']}")
+    
     return ordered_fics
-
-def LLM_make_mark_scheme(search_param):
-    ai = OllamaAI("goekdenizguelmez/JOSIEFIED-Qwen3:4b", 1)
-    print("Generating mark scheme based on user search parameters...")
-    response = ai.send_message(f"USER SEARCH PARAMETER: {search_param}")
-    print(f"\n{'='*80}")
-    print("Generated Mark Scheme:")
-    print(response)
-    print(f"{'='*80}\n")
-    
-    # Create combined system prompt (file 0 + mark scheme) and save as file 2
-    with open("0", "r") as f:
-        base_prompt = f.read()
-    
-    combined_prompt = f"{base_prompt}\n\n--- MARK SCHEME ---\n{response}"
-    
-    with open("2", "w", encoding="utf-8") as f:
-        f.write(combined_prompt)
-    
-    print("Combined system prompt saved to file '2'\n")
-    
-    return response
 
 def create_markdown_output(fics, filename="filtered_fics.md"):
     """
-    Creates a markdown file with all fics information formatted nicely.
+    Create a markdown file with all fics information formatted nicely.
     
     Args:
         fics: List of fic dictionaries with their information
         filename: Name of the output markdown file
     """
     with open(filename, 'w', encoding='utf-8') as f:
-        # Write header
         f.write("# Filtered AO3 Fics\n\n")
         f.write(f"**Total fics:** {len(fics)}\n\n")
         f.write("---\n\n")
         
-        # Write each fic
         for idx, fic in enumerate(fics, 1):
-            # Title with link
             f.write(f"## {idx}. [{fic['title']}]({fic['url']})\n\n")
             
-            # Tournament Rank if available
             if 'tournament_rank' in fic:
                 f.write(f"**Tournament Rank:** {fic['tournament_rank']}\n\n")
             
-            # LLM Rank if available
             if 'llm_rank' in fic:
                 f.write(f"**LLM Rank:** {fic['llm_rank']}\n\n")
             
-            # Basic info
             f.write(f"**Rating:** {fic['rating']}  \n")
             f.write(f"**Category:** {fic['category']}  \n")
             f.write(f"**Status:** {'Complete' if fic['is_complete'] else 'In Progress'}  \n")
             f.write(f"**Chapters:** {fic['chapters']}  \n")
             f.write(f"**Word Count:** {fic['word_count']:,}  \n\n")
             
-            # Fandoms
             if fic['fandoms']:
                 f.write(f"**Fandoms:** {' '.join(f'`{fandom}`' for fandom in fic['fandoms'])}  \n\n")
             
-            # Warnings
             if fic['warnings'] != 'N/A':
                 f.write(f"**Warnings:** {fic['warnings']}  \n\n")
             
-            # Relationships
             if fic['relationships']:
                 f.write(f"**Relationships:** {' '.join(f'`{rel}`' for rel in fic['relationships'])}  \n\n")
             
-            # Characters
             if fic['characters']:
                 f.write(f"**Characters:** {' '.join(f'`{char}`' for char in fic['characters'])}  \n\n")
             
-            # Tags
             if fic['freeform_tags']:
                 f.write(f"**Tags:** {' '.join(f'`{tag}`' for tag in fic['freeform_tags'])}  \n\n")
             
-            # Summary
             if fic['summary'] != 'N/A':
-                f.write(f"**Summary:**\n\n")
+                f.write("**Summary:**\n\n")
                 f.write(f"> {fic['summary']}\n\n")
             
-            # Stats
             f.write(f"**Stats:** {fic['kudos']} kudos | {fic['comments']} comments  \n\n")
-            
-            # Separator
             f.write("---\n\n")
     
     print(f"\n{'='*80}")
     print(f"Markdown file created: {filename}")
     print(f"{'='*80}\n")
 
-def llm_compare_pair(fic1, fic2, ai, search_param):
+def compare_fics_with_llm(fic1, fic2, ai, search_param, comparison_num=None, total_comparisons=None):
     """
     Compare two fics using LLM and return True if fic1 is better than fic2.
     
@@ -333,34 +393,50 @@ def llm_compare_pair(fic1, fic2, ai, search_param):
         fic2: Second fic dictionary
         ai: OllamaAI instance
         search_param: User's search criteria
+        comparison_num: Current comparison number (optional)
+        total_comparisons: Total expected comparisons (optional)
     
     Returns:
         True if fic1 is better, False if fic2 is better
     """
-    # Format fic summaries
+    if comparison_num is not None and total_comparisons is not None:
+        print(f"{comparison_num}/{total_comparisons}: '{fic1['title']}' vs '{fic2['title']}'")
+    
     fic1_tags = ', '.join(fic1.get('freeform_tags', [])) or 'None'
     fic2_tags = ', '.join(fic2.get('freeform_tags', [])) or 'None'
-    fic1_summary = f"Title: {fic1['title']}\nSummary: {fic1['summary']}\nTags: {fic1_tags}\nWord Count: {fic1['word_count']}\nKudos: {fic1['kudos']}"
-    fic2_summary = f"Title: {fic2['title']}\nSummary: {fic2['summary']}\nTags: {fic2_tags}\nWord Count: {fic2['word_count']}\nKudos: {fic2['kudos']}"
     
-    # Ask LLM to compare
-    prompt = f"Compare these two fics based on the user's preferences: {search_param}\n\nFic 1:\n{fic1_summary}\n\nFic 2:\n{fic2_summary}"
+    fic1_summary = (
+        f"Title: {fic1['title']}\n"
+        f"Summary: {fic1['summary']}\n"
+        f"Tags: {fic1_tags}\n"
+        f"Word Count: {fic1['word_count']}\n"
+        f"Kudos: {fic1['kudos']}"
+    )
+    fic2_summary = (
+        f"Title: {fic2['title']}\n"
+        f"Summary: {fic2['summary']}\n"
+        f"Tags: {fic2_tags}\n"
+        f"Word Count: {fic2['word_count']}\n"
+        f"Kudos: {fic2['kudos']}"
+    )
+    
+    prompt = (
+        f"Compare these two fics based on the user's preferences: {search_param}\n\n"
+        f"Fic 1:\n{fic1_summary}\n\n"
+        f"Fic 2:\n{fic2_summary}"
+    )
     response = ai.send_message(prompt)
     
-    # Parse response - check for exact format markers first, then fallback to case-insensitive
     response_lower = response.lower()
+    print(f"LLM response: {response}\n")
     if "<fic 1>" in response_lower or ("fic 1" in response_lower and "fic 2" not in response_lower):
-        result = True
+        return True
     elif "<fic 2>" in response_lower or ("fic 2" in response_lower and "fic 1" not in response_lower):
-        result = False
+        return False
     else:
-        # Unclear response - use random selection as fallback
-        result = random.choice([True, False])
-        print(f"  ⚠ Unclear LLM response: '{response[:50]}...'. Randomly selected: '{fic1['title'] if result else fic2['title']}'")
-    
-    return result
+        return random.choice([True, False])
 
-def merge_sorted_lists(left, right, ai, search_param, depth):
+def merge_sorted_lists(left, right, ai, search_param, depth, state):
     """
     Merge two sorted lists of fics by comparing items at the boundaries.
     
@@ -370,35 +446,29 @@ def merge_sorted_lists(left, right, ai, search_param, depth):
         ai: OllamaAI instance
         search_param: User's search criteria
         depth: Current recursion depth for logging
+        state: Dictionary to track comparison progress
     
     Returns:
         Merged sorted list (best to worst)
     """
     result = []
     i = j = 0
-    comparisons_this_merge = 0
-    
-    print(f"{'  ' * depth}Merging {len(left)} and {len(right)} fics...")
     
     while i < len(left) and j < len(right):
-        # Compare front items from each list
-        if llm_compare_pair(left[i], right[j], ai, search_param):
+        state['current'] += 1
+        if compare_fics_with_llm(left[i], right[j], ai, search_param, state['current'], state['total']):
             result.append(left[i])
             i += 1
         else:
             result.append(right[j])
             j += 1
-        comparisons_this_merge += 1
     
-    # Append remaining items
     result.extend(left[i:])
     result.extend(right[j:])
     
-    print(f"{'  ' * depth}✓ Merged into {len(result)} fics ({comparisons_this_merge} comparisons)")
-    
     return result
 
-def merge_sort_fics(fics, ai, search_param, depth=0):
+def merge_sort_fics(fics, ai, search_param, state):
     """
     Recursively sort fics using merge sort with LLM comparisons.
     
@@ -406,33 +476,28 @@ def merge_sort_fics(fics, ai, search_param, depth=0):
         fics: List of fic dictionaries to sort
         ai: OllamaAI instance
         search_param: User's search criteria
-        depth: Current recursion depth for logging
+        state: Dictionary to track comparison progress
     
     Returns:
         Sorted list of fics from best (rank 1) to worst (rank N)
     """
-    # Base case: 0 or 1 items are already sorted
     if len(fics) <= 1:
         return fics
     
-    # Base case: 2 items - direct comparison
     if len(fics) == 2:
-        print(f"{'  ' * depth}Comparing: '{fics[0]['title']}' vs '{fics[1]['title']}'")
-        if llm_compare_pair(fics[0], fics[1], ai, search_param):
+        state['current'] += 1
+        if compare_fics_with_llm(fics[0], fics[1], ai, search_param, state['current'], state['total']):
             return [fics[0], fics[1]]
         else:
             return [fics[1], fics[0]]
     
-    # Recursive case: divide and conquer
     mid = len(fics) // 2
-    print(f"{'  ' * depth}Dividing {len(fics)} fics into {mid} and {len(fics) - mid}...")
+    left_sorted = merge_sort_fics(fics[:mid], ai, search_param, state)
+    right_sorted = merge_sort_fics(fics[mid:], ai, search_param, state)
     
-    left_sorted = merge_sort_fics(fics[:mid], ai, search_param, depth + 1)
-    right_sorted = merge_sort_fics(fics[mid:], ai, search_param, depth + 1)
-    
-    return merge_sorted_lists(left_sorted, right_sorted, ai, search_param, depth)
+    return merge_sorted_lists(left_sorted, right_sorted, ai, search_param, 0, state)
 
-def LLM_tournament_style_ranking(fics, search_param):
+def rank_fics_with_tournament(fics, search_param):
     """
     Rank fics using merge sort with LLM pairwise comparisons.
     Establishes absolute rankings from 1st to Nth place.
@@ -450,68 +515,56 @@ def LLM_tournament_style_ranking(fics, search_param):
     if not search_param or not isinstance(search_param, str):
         raise ValueError("search_param must be a non-empty string")
     
-    # Validate that fics have required fields
     required_fields = ['title', 'summary', 'freeform_tags', 'word_count', 'kudos']
     for fic in fics:
         missing_fields = [field for field in required_fields if field not in fic]
         if missing_fields:
             raise ValueError(f"Fic '{fic.get('title', 'Unknown')}' missing required fields: {missing_fields}")
     
+    # ai = OllamaAI("goekdenizguelmez/JOSIEFIED-Qwen3:4b", 3, max_history_pairs=0)
     ai = OllamaAI("goekdenizguelmez/JOSIEFIED-Qwen3:4b", 3, max_history_pairs=0)
     
-    import math
-    
-    print(f"\n{'='*80}")
-    print(f"Starting Tournament-Style Ranking (Merge Sort Algorithm)")
-    print(f"Total fics: {len(fics)}")
-    # Merge sort uses between (N/2)*log2(N) and N*log2(N) comparisons
     if len(fics) > 1:
-        expected_min = int(len(fics) * math.log2(len(fics)) * 0.5)
-        expected_max = int(len(fics) * math.log2(len(fics)))
-        print(f"Expected comparisons: ~{expected_min} to {expected_max}")
-    print(f"{'='*80}\n")
+        expected_comparisons = int(1.44 * len(fics) * math.log2(len(fics)))
+    else:
+        expected_comparisons = 0
+    
+    print(f"\nRanking {len(fics)} fics (estimated {expected_comparisons} comparisons)...\n")
+    
+    state = {'current': 0, 'total': expected_comparisons}
     
     try:
-        # Perform merge sort
-        sorted_fics = merge_sort_fics(fics, ai, search_param, depth=0)
+        sorted_fics = merge_sort_fics(fics, ai, search_param, state)
         
-        # Assign tournament ranks (1 = best)
         for rank, fic in enumerate(sorted_fics, 1):
             fic['tournament_rank'] = rank
         
-        print(f"\n{'='*80}")
-        print(f"Tournament Ranking Complete!")
-        print(f"{'='*80}\n")
-        
-        # Display final rankings
-        print("Final Tournament Rankings:")
-        for rank, fic in enumerate(sorted_fics, 1):
-            print(f"  {rank}. '{fic['title']}' (Word Count: {fic['word_count']:,})")
-        print()
+        print(f"\n✓ Ranking complete ({state['current']} comparisons)\n")
         
         return sorted_fics
         
     except KeyboardInterrupt:
-        print(f"\n\n{'='*80}")
-        print(f"Tournament interrupted! Partial rankings may be incomplete.")
-        print(f"{'='*80}\n")
+        print(f"\n\n⚠ Interrupted after {state['current']} comparisons\n")
         return fics
 
 def main():
+    # Uncomment to use user input:
     # url, pages, search_param = get_user_input()
-    url = r"https://archiveofourown.org/works?work_search%5Bsort_column%5D=kudos_count&work_search%5Bother_tag_names%5D=&exclude_work_search%5Barchive_warning_ids%5D%5B%5D=19&exclude_work_search%5Barchive_warning_ids%5D%5B%5D=20&exclude_work_search%5Bfandom_ids%5D%5B%5D=236208&exclude_work_search%5Bfandom_ids%5D%5B%5D=58290284&exclude_work_search%5Bfandom_ids%5D%5B%5D=115270897&exclude_work_search%5Brelationship_ids%5D%5B%5D=63193414&exclude_work_search%5Brelationship_ids%5D%5B%5D=5276584&work_search%5Bexcluded_tag_names%5D=&work_search%5Bcrossover%5D=F&work_search%5Bcomplete%5D=T&work_search%5Bwords_from%5D=&work_search%5Bwords_to%5D=&work_search%5Bdate_from%5D=&work_search%5Bdate_to%5D=&work_search%5Bquery%5D=&work_search%5Blanguage_id%5D=en&commit=Sort+and+Filter&tag_id=Adrian+Chase*s*Reader"
-    pages = 1
-    search_param = "less than 10k words, but more than 3k. it needs to be aidrian chase x reader. no angst, smut is nice but not required. happy endings preferred. no anal at all, or watersports or oviposition. no fics that use placeholders like (y/n) or (name)."
-    fics = get_pages(url, pages)
-    random.shuffle(fics)  # shuffle fics to avoid any order bias (shuffles in-place)
-    # LLM_make_mark_scheme(search_param)
+    
+    # Example configuration
+    url = r"placeholder"
+    pages = 4
+    search_param = "placeholder"
+    
+    fics = scrape_multiple_pages(url, pages)
+    random.shuffle(fics)
     
     # Choose ranking method:
-    # Option 1: Use tournament ranking (merge sort - optimal O(N log N))
-    ordered_fics = LLM_tournament_style_ranking(fics, search_param)
+    # Option 1: Tournament ranking (merge sort - O(N log N) comparisons)
+    ordered_fics = rank_fics_with_tournament(fics, search_param)
     
-    # Option 2: Use original scoring system (uncomment to use instead)
-    # ordered_fics = LLM_filter_and_sort(fics, search_param)
+    # Option 2: Scoring system (uncomment to use instead)
+    # ordered_fics = rank_fics_with_scoring(fics, search_param)
     
     create_markdown_output(ordered_fics)
 
