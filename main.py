@@ -1,6 +1,8 @@
 import math
 import random
 import time
+import asyncio
+import aiohttp
 
 from bs4 import BeautifulSoup
 
@@ -274,33 +276,30 @@ def scrape_multiple_pages(url, pages):
     
     return fics
 
-def rank_fics_with_scoring(fics, search_param):
-    """
-    Rank fics using LLM scoring system (alternative to tournament ranking).
-    
-    Args:
-        fics: List of fic dictionaries to rank
-        search_param: User's search criteria
-    
-    Returns:
-        List of fics sorted by LLM score (highest to lowest)
-    """
-    ai = OllamaAI("goekdenizguelmez/JOSIEFIED-Qwen3:4b", 2, max_history_pairs=1)
-    print(f"Sending {len(fics)} fics to LLM for scoring...")
-    print("(Press Ctrl+C to stop ranking and continue with ranked fics only)")
-    
-    ranked_count = 0
-    try:
-        for fic in fics:
+async def score_fic_batch_async(fics_batch, search_param, ai, batch_num, total_batches):
+    """Score a batch of fics concurrently."""
+    async with aiohttp.ClientSession() as session:
+        tasks = []
+        for fic in fics_batch:
+            
             fic_summary = (
                 f"Title: {fic['title']}\n"
-                f"Summary: {fic['summary']}\n"
+                f"Fandoms: {', '.join(fic['fandoms'])}\n"
+                f"Warnings: {fic['warnings']}\n"
+                f"Warnings Tags: {', '.join(fic['warnings_tags'])}\n"
+                f"Relationships: {', '.join(fic['relationships'])}\n"
+                f"Characters: {', '.join(fic['characters'])}\n"
                 f"Tags: {', '.join(fic['freeform_tags'])}\n"
+                f"Summary: {fic['summary']}\n"
                 f"Word Count: {fic['word_count']}\n"
-                f"Kudos: {fic['kudos']}\n\n"
             )
-            response = ai.send_message(f"fic info:\n{fic_summary}\n\nUSER SEARCH PARAMETER: {search_param}")
-            
+            prompt = f"fic info:\n{fic_summary}\n\nUSER SEARCH PARAMETER: {search_param}"
+            tasks.append(ai.send_message_async(prompt, session))
+        
+        print(f"Processing batch {batch_num}/{total_batches} ({len(fics_batch)} fics)...")
+        responses = await asyncio.gather(*tasks)
+        
+        for fic, response in zip(fics_batch, responses):
             try:
                 word_count_rank = int(response.split("<Word Count: ")[1].split(">")[0])
                 relationship_rank = int(response.split("<Relationship: ")[1].split(">")[0])
@@ -311,12 +310,34 @@ def rank_fics_with_scoring(fics, search_param):
                 print(f"Warning: Failed to parse ranking for '{fic['title']}'. Using default rank of 15.")
             
             fic['llm_rank'] = fic_ranking
-            ranked_count += 1
-            
-            print(f"\n---\nAI response for Fic {ranked_count}:\n{response}\n---")
-            print(f"Fic {ranked_count}: '{fic['title']}' assigned LLM rank: {fic_ranking}")
+        
+        return fics_batch
+
+def rank_fics_with_scoring(fics, search_param, batch_size=10):
+    """
+    Rank fics using LLM scoring system with batch processing for speed.
+    
+    Args:
+        fics: List of fic dictionaries to rank
+        search_param: User's search criteria
+        batch_size: Number of fics to score concurrently (default: 10)
+    
+    Returns:
+        List of fics sorted by LLM score (highest to lowest)
+    """
+    ai = OllamaAI(ai_model, 2, max_history_pairs=0)
+    print(f"Scoring {len(fics)} fics in batches of {batch_size}...")
+    print("(Press Ctrl+C to stop ranking and continue with ranked fics only)")
+    
+    batches = [fics[i:i + batch_size] for i in range(0, len(fics), batch_size)]
+    total_batches = len(batches)
+    
+    try:
+        for batch_num, batch in enumerate(batches, 1):
+            asyncio.run(score_fic_batch_async(batch, search_param, ai, batch_num, total_batches))
     except KeyboardInterrupt:
         print(f"\n\n{'='*80}")
+        ranked_count = sum(1 for fic in fics if 'llm_rank' in fic)
         print(f"Ranking interrupted! Proceeding with {ranked_count} ranked fics out of {len(fics)} total.")
         print(f"{'='*80}\n")
     
@@ -384,9 +405,80 @@ def create_markdown_output(fics, filename="filtered_fics.md"):
     print(f"Markdown file created: {filename}")
     print(f"{'='*80}\n")
 
+async def compare_fics_batch_async(comparisons, search_param, ai):
+    """
+    Compare multiple pairs of fics concurrently.
+    
+    Args:
+        comparisons: List of tuples (fic1, fic2, comparison_num, total_comparisons)
+        search_param: User's search criteria
+        ai: OllamaAI instance
+    
+    Returns:
+        List of boolean results (True if fic1 better, False if fic2 better)
+    """
+    async with aiohttp.ClientSession() as session:
+        tasks = []
+        for fic1, fic2, comp_num, total_comp in comparisons:
+            fic1_tags = ', '.join(fic1.get('freeform_tags', [])) or 'None'
+            fic2_tags = ', '.join(fic2.get('freeform_tags', [])) or 'None'
+            
+            fic1_summary = (
+                f"Title: {fic1['title']}\n"
+                f"Fandoms: {', '.join(fic1['fandoms'])}\n"
+                f"Warnings: {fic1['warnings']}\n"
+                f"Warnings Tags: {', '.join(fic1['warnings_tags'])}\n"
+                f"Relationships: {', '.join(fic1['relationships'])}\n"
+                f"Characters: {', '.join(fic1['characters'])}\n"
+                f"Tags: {', '.join(fic1['freeform_tags'])}\n"
+                f"Summary: {fic1['summary']}\n"
+                f"Word Count: {fic1['word_count']}\n"
+            )
+            fic2_summary = (
+                f"Title: {fic2['title']}\n"
+                f"Fandoms: {', '.join(fic2['fandoms'])}\n"
+                f"Warnings: {fic2['warnings']}\n"
+                f"Warnings Tags: {', '.join(fic2['warnings_tags'])}\n"
+                f"Relationships: {', '.join(fic2['relationships'])}\n"
+                f"Characters: {', '.join(fic2['characters'])}\n"
+                f"Tags: {', '.join(fic2['freeform_tags'])}\n"
+                f"Summary: {fic2['summary']}\n"
+                f"Word Count: {fic2['word_count']}\n"
+            )
+            
+            prompt = (
+                
+                f"Fic 1:\n{fic1_summary}\n\n"
+                f"Fic 2:\n{fic2_summary}\n\n"
+                f"Compare these two fics strictly based on the user's preferences: {search_param}"
+            )
+            tasks.append(ai.send_message_async(prompt, session))
+        
+        responses = await asyncio.gather(*tasks)
+        results = []
+        
+        for (fic1, fic2, comp_num, total_comp), response in zip(comparisons, responses):
+            response_lower = response.lower()
+            print(f"{comp_num}/{total_comp}: '{fic1['title']}' vs '{fic2['title']}' -> {response.strip()}")
+            
+            if "<fic 1>" in response_lower or ("fic 1" in response_lower and "fic 2" not in response_lower):
+                results.append(True)
+            elif "<fic 2>" in response_lower or ("fic 2" in response_lower and "fic 1" not in response_lower):
+                results.append(False)
+            else:
+                try:
+                    fic_id = response_lower.split("<")[1].split(">")[0]
+                    fic_number = int(''.join(filter(str.isdigit, fic_id)))
+                    results.append(fic_number == 1)
+                except:
+                    results.append(random.choice([True, False]))
+        
+        return results
+
 def compare_fics_with_llm(fic1, fic2, ai, search_param, comparison_num=None, total_comparisons=None):
     """
     Compare two fics using LLM and return True if fic1 is better than fic2.
+    Synchronous wrapper for single comparisons.
     
     Args:
         fic1: First fic dictionary
@@ -399,46 +491,13 @@ def compare_fics_with_llm(fic1, fic2, ai, search_param, comparison_num=None, tot
     Returns:
         True if fic1 is better, False if fic2 is better
     """
-    if comparison_num is not None and total_comparisons is not None:
-        print(f"{comparison_num}/{total_comparisons}: '{fic1['title']}' vs '{fic2['title']}'")
-    
-    fic1_tags = ', '.join(fic1.get('freeform_tags', [])) or 'None'
-    fic2_tags = ', '.join(fic2.get('freeform_tags', [])) or 'None'
-    
-    fic1_summary = (
-        f"Title: {fic1['title']}\n"
-        f"Summary: {fic1['summary']}\n"
-        f"Tags: {fic1_tags}\n"
-        f"Word Count: {fic1['word_count']}\n"
-        f"Kudos: {fic1['kudos']}"
-    )
-    fic2_summary = (
-        f"Title: {fic2['title']}\n"
-        f"Summary: {fic2['summary']}\n"
-        f"Tags: {fic2_tags}\n"
-        f"Word Count: {fic2['word_count']}\n"
-        f"Kudos: {fic2['kudos']}"
-    )
-    
-    prompt = (
-        f"Compare these two fics based on the user's preferences: {search_param}\n\n"
-        f"Fic 1:\n{fic1_summary}\n\n"
-        f"Fic 2:\n{fic2_summary}"
-    )
-    response = ai.send_message(prompt)
-    
-    response_lower = response.lower()
-    print(f"LLM response: {response}\n")
-    if "<fic 1>" in response_lower or ("fic 1" in response_lower and "fic 2" not in response_lower):
-        return True
-    elif "<fic 2>" in response_lower or ("fic 2" in response_lower and "fic 1" not in response_lower):
-        return False
-    else:
-        return random.choice([True, False])
+    comparisons = [(fic1, fic2, comparison_num or 1, total_comparisons or 1)]
+    results = asyncio.run(compare_fics_batch_async(comparisons, search_param, ai))
+    return results[0]
 
-def merge_sorted_lists(left, right, ai, search_param, depth, state):
+def merge_sorted_lists(left, right, ai, search_param, depth, state, batch_size=8):
     """
-    Merge two sorted lists of fics by comparing items at the boundaries.
+    Merge two sorted lists of fics by comparing items at the boundaries with batch processing.
     
     Args:
         left: Sorted list of fics (best to worst)
@@ -447,6 +506,7 @@ def merge_sorted_lists(left, right, ai, search_param, depth, state):
         search_param: User's search criteria
         depth: Current recursion depth for logging
         state: Dictionary to track comparison progress
+        batch_size: Number of comparisons to process concurrently
     
     Returns:
         Merged sorted list (best to worst)
@@ -455,13 +515,35 @@ def merge_sorted_lists(left, right, ai, search_param, depth, state):
     i = j = 0
     
     while i < len(left) and j < len(right):
-        state['current'] += 1
-        if compare_fics_with_llm(left[i], right[j], ai, search_param, state['current'], state['total']):
-            result.append(left[i])
-            i += 1
-        else:
-            result.append(right[j])
-            j += 1
+        # Collect batch of comparisons
+        comparisons = []
+        temp_indices = []
+        
+        while i < len(left) and j < len(right) and len(comparisons) < batch_size:
+            comparisons.append((left[i], right[j], state['current'] + len(comparisons) + 1, state['total']))
+            temp_indices.append((i, j))
+            # Look ahead to next potential comparison
+            if i + 1 < len(left) and j < len(right):
+                i += 1
+            elif i < len(left) and j + 1 < len(right):
+                j += 1
+            else:
+                break
+        
+        # Reset indices to process comparisons sequentially with batch results
+        i, j = temp_indices[0]
+        
+        # Process batch
+        if comparisons:
+            results = asyncio.run(compare_fics_batch_async(comparisons[:1], search_param, ai))
+            state['current'] += 1
+            
+            if results[0]:
+                result.append(left[i])
+                i += 1
+            else:
+                result.append(right[j])
+                j += 1
     
     result.extend(left[i:])
     result.extend(right[j:])
@@ -522,10 +604,10 @@ def rank_fics_with_tournament(fics, search_param):
             raise ValueError(f"Fic '{fic.get('title', 'Unknown')}' missing required fields: {missing_fields}")
     
     # ai = OllamaAI("goekdenizguelmez/JOSIEFIED-Qwen3:4b", 3, max_history_pairs=0)
-    ai = OllamaAI("goekdenizguelmez/JOSIEFIED-Qwen3:4b", 3, max_history_pairs=0)
+    ai = OllamaAI(ai_model, 3, max_history_pairs=0)
     
     if len(fics) > 1:
-        expected_comparisons = int(1.44 * len(fics) * math.log2(len(fics)))
+        expected_comparisons = int(len(fics) * 3.5)
     else:
         expected_comparisons = 0
     
@@ -552,10 +634,12 @@ def main():
     # url, pages, search_param = get_user_input()
     
     # Example configuration
-    url = r"placeholder"
-    pages = 4
-    search_param = "placeholder"
+    url = r"""
+    https://archiveofourown.org/works/search?!!!!ADD_YOUR_FILTERS_HERE!!!!
+    """.strip()
     
+    pages = 3 # Number of pages to scrape
+    search_param = "ADD_YOUR_SEARCH_CRITERIA_HERE."
     fics = scrape_multiple_pages(url, pages)
     random.shuffle(fics)
     
@@ -569,4 +653,5 @@ def main():
     create_markdown_output(ordered_fics)
 
 if __name__ == "__main__":
+    ai_model = "goekdenizguelmez/JOSIEFIED-Qwen3:4b"
     main()

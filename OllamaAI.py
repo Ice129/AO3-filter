@@ -1,6 +1,8 @@
 import requests
 import json
 import subprocess
+import asyncio
+import aiohttp
 
 
 class OllamaAI:
@@ -81,6 +83,26 @@ class OllamaAI:
         )
         response_json = response.json()
         return response_json["message"]["content"]
+    
+    async def send_message_async(self, message, session):
+        """Async version of send_message that doesn't modify chat history."""
+        messages = self.chat_history.copy()
+        message_obj = {
+            "role": "user",
+            "content": message,
+            "options": self.options
+        }
+        messages.append(message_obj)
+        
+        data = {"model": self.model, "messages": messages, "stream": False}
+        
+        async with session.post(
+            "http://localhost:11434/api/chat",
+            json=data,
+            timeout=aiohttp.ClientTimeout(total=120)
+        ) as response:
+            response_json = await response.json()
+            return response_json["message"]["content"]
     
     def __trim_chat_history(self):
         """
