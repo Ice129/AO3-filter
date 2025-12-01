@@ -630,16 +630,17 @@ def rank_fics_with_tournament(fics, search_param):
         return fics
 
 def main():
-    # Uncomment to use user input:
-    # url, pages, search_param = get_user_input()
+
+    url, pages, search_param = get_user_input()
+
+    # hardcoded configuration
+    # url = r"""
+    # https://archiveofourown.org/works/search?!!!!ADD_YOUR_FILTERS_HERE!!!!
+    # """.strip()
+    # pages = 3 # Number of pages to scrape
+    # search_param = "ADD_YOUR_SEARCH_CRITERIA_HERE."
     
-    # Example configuration
-    url = r"""
-    https://archiveofourown.org/works/search?!!!!ADD_YOUR_FILTERS_HERE!!!!
-    """.strip()
     
-    pages = 3 # Number of pages to scrape
-    search_param = "ADD_YOUR_SEARCH_CRITERIA_HERE."
     fics = scrape_multiple_pages(url, pages)
     random.shuffle(fics)
     
